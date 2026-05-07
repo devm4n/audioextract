@@ -9,7 +9,7 @@ from .models import Video
 @shared_task
 def audio_extract(vid_id):
     try:
-        input_video = Video.object.get(id=vid_id)
+        input_video = Video.objects.get(id=vid_id)
         input_video_path = input_video.video_file.path
         output_video_filename = f"{os.path.splitext(input_video_path)[0]}.mp3"
         command = [
@@ -17,11 +17,15 @@ def audio_extract(vid_id):
             "-i",
             input_video_path,
             "-vn",
-            ",-c:a",
-            "copy",
+            "-c:a",
+            "libmp3lame",
+            "-q:a",
+            "2",
             output_video_filename,
         ]
         subprocess.run(command, check=True)
+        input_video.audio_file = output_video_filename.replace("/app/media/", "")
+        input_video.save()
         return f"extracted to {output_video_filename}"
     except Exception as e:
         return f"Error{e}"

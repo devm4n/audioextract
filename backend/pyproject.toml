@@ -10,4 +10,6 @@ dependencies = [
     "django-cors-headers>=4.9.0",
     "django-redis>=6.0.0",
     "djangorestframework>=3.17.1",
+    "ffmpeg>=1.4",
+    "psycopg>=3.3.4",
 ]
