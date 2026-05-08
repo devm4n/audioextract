@@ -16,7 +16,6 @@ class AudioExtractView(views.APIView):
     def post(self, request):
         serializer = AudioExtractSerializer(data=request.data)
         if serializer.is_valid():
-            print(serializer)
             video_instance = serializer.save()
             audio_extract.delay(video_instance.id)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -29,6 +28,8 @@ class AudioStatusView(views.APIView):
             video = Video.objects.get(id=pk)
         except Video.DoesNotExist:
             return Response({"error": "not_found"}, status=status.HTTP_404_NOT_FOUND)
+        if video.status == "failed":
+            return Response(status=status.HTTP_400_BAD_REQUEST)
         if video.audio_file:
             return Response(
                 {
@@ -42,8 +43,8 @@ class AudioStatusView(views.APIView):
 class AudioDownloadView(views.APIView):
     def get(self, request, pk):
         video = Video.objects.get(id=pk)
-        file_path = video.audio_file.path()
+        file_path = video.audio_file.path
         response = FileResponse(open(file_path, "rb"))
         response["Content-Disposition"] = (
-            f'attachement; filename="{os.path.basename(file_path)}"'
+            f'attachment; filename="{os.path.basename(file_path)}"'
         )
