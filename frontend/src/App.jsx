@@ -3,6 +3,7 @@ import { useState } from "react";
 
 export default function App() {
   const [file, setFile] = useState(null);
+  const [error, setError] = useState("");
   const [status, setStatus] = useState("");
   const [audioUrl, setAudioUrl] = useState(null);
   const apiUrl = import.meta.env.VITE_API_URL;
@@ -22,10 +23,15 @@ export default function App() {
           clearInterval(intervel);
           setStatus("done");
           setAudioUrl(data.audio_url);
+        } else if (data.status == "failed") {
+          setStatus("failed");
+          clearInterval(intervel);
         }
       }, 3000);
       return response.data;
     } catch (err) {
+      setStatus("failed");
+      setError(err.response.data.video_file?.[0]);
       return console.log(err.response.data);
     }
   };
@@ -48,7 +54,10 @@ export default function App() {
         <button onClick={handleSubmit} disabled={!file}>
           Process
         </button>
-        <p>{status}</p>
+        <p>
+          {status} <br></br>
+          {error}
+        </p>
         {audioUrl && (
           <button onClick={() => handleDownload(audioUrl, "audio.mp3")}>
             Download MP3
