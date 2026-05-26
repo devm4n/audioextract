@@ -2,6 +2,8 @@
 
 Extract audio from any video file — upload, process, download. Built with Django, Celery, Redis, PostgreSQL, and React.
 
+## Vercel Deployed Front-End https://audioextract-red.vercel.app/
+
 ## How it works
 
 1. User uploads a video file via the React frontend
