@@ -15,24 +15,23 @@ export default function App() {
       setStatus("uploading");
       const response = await axios.post(`${apiUrl}/upload/`, form);
       const { id } = response.data;
-
       setStatus("processing");
-      const intervel = setInterval(async () => {
+      const interval = setInterval(async () => {
         const { data } = await axios.get(`${apiUrl}/status/${id}/`);
-        if (data.status == "done") {
-          clearInterval(intervel);
+        if (data.status === "done") {
+          clearInterval(interval);
           setStatus("done");
           setAudioUrl(data.audio_url);
-        } else if (data.status == "failed") {
+        } else if (data.status === "failed") {
           setStatus("failed");
-          clearInterval(intervel);
+          clearInterval(interval);
         }
       }, 3000);
       return response.data;
     } catch (err) {
       setStatus("failed");
-      setError(err.response.data.video_file?.[0]);
-      return console.log(err.response.data);
+      setError(err.response?.data?.video_file?.[0] ?? "");
+      return console.log(err.response?.data);
     }
   };
 
@@ -48,22 +47,47 @@ export default function App() {
   };
 
   return (
-    <>
-      <div>
-        <input type="file" onChange={(e) => setFile(e.target.files[0])}></input>
-        <button onClick={handleSubmit} disabled={!file}>
+    <div className="bg-zinc-950 min-h-screen flex items-center justify-center font-mono">
+      <div className="w-full max-w-sm px-4">
+        <h2 className="text-zinc-500 text-xl uppercase tracking-widest mb-6">
+          audioextract
+        </h2>
+
+        <label className="block w-full border border-dashed border-zinc-700 rounded p-6 text-center cursor-pointer hover:border-emerald-500 transition-colors group mb-4">
+          <span className="text-zinc-400 text-sm group-hover:text-emerald-400 transition-colors">
+            {file ? file.name : "drop video or click to choose"}
+          </span>
+          <input
+            type="file"
+            className="hidden"
+            onChange={(e) => setFile(e.target.files[0])}
+          />
+        </label>
+
+        <button
+          onClick={handleSubmit}
+          disabled={!file}
+          className="w-full bg-emerald-500 text-zinc-950 text-sm font-semibold py-2.5 rounded hover:bg-emerald-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+        >
           Process
         </button>
-        <p>
-          {status} <br></br>
-          {error}
-        </p>
+
+        {(status || error) && (
+          <p className="text-zinc-500 text-xs mt-4">
+            {status}
+            {error && <span className="text-red-400 ml-1">{error}</span>}
+          </p>
+        )}
+
         {audioUrl && (
-          <button onClick={() => handleDownload(audioUrl, "audio.mp3")}>
+          <button
+            onClick={() => handleDownload(audioUrl, "audio.mp3")}
+            className="mt-3 w-full border border-emerald-500 text-emerald-400 text-sm py-2.5 rounded hover:bg-emerald-500 hover:text-zinc-950 transition-colors"
+          >
             Download MP3
           </button>
         )}
       </div>
-    </>
+    </div>
   );
 }
