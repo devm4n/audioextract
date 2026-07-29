@@ -11,9 +11,7 @@ services:
       - .env
     ports:
       - "8000:8000"
-    command: >
-      bash -c "uv run manage.py migrate &&
-      uv run manage.py runserver 0.0.0.0:8000"
+    command: ["uv", "run", "manage.py", "runserver", "0.0.0.0:8000"]
     depends_on:
       postgresql:
         condition: service_healthy
