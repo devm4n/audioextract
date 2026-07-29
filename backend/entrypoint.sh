@@ -2,6 +2,7 @@
 set -e
 
 uv run manage.py migrate --noinput
+uv run manage.py collectstatic --noinput
 
 uv run manage.py shell -c "
 from django.contrib.auth import get_user_model
