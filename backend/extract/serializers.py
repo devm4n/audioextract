@@ -8,8 +8,15 @@ from .models import Video
 class AudioExtractSerializer(serializers.ModelSerializer):
     class Meta:
         model = Video
-        fields = ["id", "audio_file", "video_file", "status"]
-        read_only_fields = ["audio_file"]
+        fields = [
+            "id", "audio_file", "video_file", "captioned_video",
+            "subtitle_file", "transcript", "caption_style", "status",
+            "video_url", "audio_url", "captioned_video_url", "subtitle_url",
+        ]
+        read_only_fields = [
+            "audio_file", "captioned_video", "subtitle_file", "transcript",
+            "video_url", "audio_url", "captioned_video_url", "subtitle_url",
+        ]
 
     def validate_video_file(self, value):
         allowed = [".mp4", ".mkv", ".avi", ".mov", ".webm"]

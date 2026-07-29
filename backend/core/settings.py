@@ -114,7 +114,7 @@ USE_TZ = True
 STATIC_URL = "static/"
 
 ######################################################
-CELERY_BROKER_URL = "redis://redis:6379/0"
+SARVAM_API_KEY = os.environ.get("SARVAM_API_KEY", "")
 
 CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOWED_ORIGINS = [

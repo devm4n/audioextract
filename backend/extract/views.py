@@ -1,3 +1,4 @@
+import json
 import os
 
 from django.http import FileResponse
@@ -6,8 +7,8 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 
 from .models import Video
+from .processor import process_video
 from .serializers import AudioExtractSerializer
-from .tasks import audio_extract
 
 
 class AudioExtractView(views.APIView):
@@ -16,9 +17,18 @@ class AudioExtractView(views.APIView):
     def post(self, request):
         serializer = AudioExtractSerializer(data=request.data)
         if serializer.is_valid():
-            video_instance = serializer.save()
-            audio_extract.delay(video_instance.id)
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
+            caption_style = request.data.get("caption_style")
+            if isinstance(caption_style, str):
+                caption_style = json.loads(caption_style)
+            video = serializer.save(caption_style=caption_style or {})
+            try:
+                process_video(video.id)
+                video.refresh_from_db()
+                return Response(AudioExtractSerializer(video).data, status=status.HTTP_201_CREATED)
+            except Exception as e:
+                video.status = "failed"
+                video.save()
+                return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -29,22 +39,38 @@ class AudioStatusView(views.APIView):
         except Video.DoesNotExist:
             return Response({"error": "not_found"}, status=status.HTTP_404_NOT_FOUND)
         if video.status == "failed":
-            return Response(status=status.HTTP_400_BAD_REQUEST)
-        if video.audio_file:
-            return Response(
-                {
-                    "status": "done",
-                    "audio_url": request.build_absolute_uri(video.audio_file.url),
-                }
-            )
-        return Response({"status": "processing"})
+            return Response({"error": "processing_failed"}, status=status.HTTP_400_BAD_REQUEST)
+        data = {"status": video.status, **AudioExtractSerializer(video).data}
+        return Response(data)
 
 
 class AudioDownloadView(views.APIView):
     def get(self, request, pk):
-        video = Video.objects.get(id=pk)
-        file_path = video.audio_file.path
-        response = FileResponse(open(file_path, "rb"))
-        response["Content-Disposition"] = (
-            f'attachment; filename="{os.path.basename(file_path)}"'
-        )
+        try:
+            video = Video.objects.get(id=pk)
+        except Video.DoesNotExist:
+            return Response({"error": "not_found"}, status=status.HTTP_404_NOT_FOUND)
+        field = request.query_params.get("type", "captioned_video")
+        url = {
+            "video": video.video_url,
+            "audio": video.audio_url,
+            "subtitle": video.subtitle_url,
+            "captioned_video": video.captioned_video_url,
+        }.get(field)
+        if url:
+            from urllib.parse import urlparse
+            import urllib.request
+            resp = urllib.request.urlopen(url)
+            response = FileResponse(resp)
+            response["Content-Disposition"] = f'attachment; filename="{os.path.basename(urlparse(url).path)}"'
+            return response
+        f = {
+            "audio": video.audio_file,
+            "subtitle": video.subtitle_file,
+            "captioned_video": video.captioned_video,
+        }.get(field)
+        if f and os.path.exists(f.path):
+            response = FileResponse(open(f.path, "rb"))
+            response["Content-Disposition"] = f'attachment; filename="{os.path.basename(f.path)}"'
+            return response
+        return Response({"error": "file_not_found"}, status=status.HTTP_404_NOT_FOUND)

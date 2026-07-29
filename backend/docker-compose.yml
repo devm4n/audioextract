@@ -1,9 +1,4 @@
 services:
-  redis:
-    container_name: redis
-    image: redis:7.4-alpine
-    ports:
-      - "6379:6379"
   django:
     container_name: django
     build: .
@@ -22,26 +17,6 @@ services:
     depends_on:
       postgresql:
         condition: service_healthy
-      redis:
-        condition: service_started
-  celery:
-    container_name: celery
-    build: .
-    command: uv run celery -A core worker -l info
-    volumes:
-      - .:/app
-      - media:/app/media
-    environment:
-      - UV_PROJECT_ENVIRONMENT=/venv
-    env_file:
-      - .env
-    depends_on:
-      postgresql:
-        condition: service_healthy
-      redis:
-        condition: service_started
-      django:
-        condition: service_started
   postgresql:
     image: postgres
     restart: always
