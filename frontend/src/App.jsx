@@ -24,7 +24,7 @@ export default function App() {
     position: "bottom",
     maxWords: 8,
   });
-  const apiUrl = import.meta.env.VITE_API_URL;
+  const apiUrl = (import.meta.env.VITE_API_URL || "").replace(/\/+$/, "");
 
   const handleSubmit = async () => {
     const form = new FormData();
