@@ -80,9 +80,8 @@ export default function App() {
 
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold bg-gradient-to-r from-emerald-400 to-cyan-400 bg-clip-text text-transparent">
-            CaptionGen
+            CapDamn!
           </h1>
-          <p className="text-zinc-500 text-xs mt-1 tracking-widest uppercase">AI-powered video captions</p>
         </div>
 
         <label
