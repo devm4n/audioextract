@@ -1,1 +1,7 @@
 .env
+
+#
+# Ponytail - OpenCode Plugin (Instalación Local)
+ponytail/
+.opencode/plugins/ponytail.mjs
+.opencode/command/*

@@ -1,1 +1,20 @@
 @import "tailwindcss";
+
+html {
+  scroll-behavior: smooth;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 8px;
+  border-radius: 9999px;
+}
+
+input[type="range"]::-moz-range-track {
+  height: 8px;
+  border-radius: 9999px;
+  background: transparent;
+}
