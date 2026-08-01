@@ -1,5 +1,6 @@
 import axios from "axios";
 import { useState, useRef } from "react";
+import { extractAudio } from "./ffmpeg";
 
 const STYLES = {
   fonts: ["Arial", "Inter", "Montserrat", "Poppins", "Bebas Neue"],
@@ -16,6 +17,8 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [dragging, setDragging] = useState(false);
+  const [stage, setStage] = useState("idle");
+  const [progress, setProgress] = useState(0);
   const inputRef = useRef(null);
   const [style, setStyle] = useState({
     font: "Inter",
@@ -39,20 +42,37 @@ export default function App() {
   };
 
   const handleSubmit = async () => {
-    const form = new FormData();
-    form.append("video_file", file);
-    form.append("caption_style", JSON.stringify(style));
     setLoading(true);
     setError("");
     setResult(null);
+    setProgress(0);
+    let audioBlob = null;
     try {
+      setStage("loading");
+      try {
+        setStage("extracting");
+        audioBlob = await extractAudio(file, (p) => {
+          setStage("extracting");
+          setProgress(p);
+        });
+      } catch {
+        // fall back to server-side extraction
+      }
+      const form = new FormData();
+      form.append("video_file", file);
+      if (audioBlob) form.append("audio_file", audioBlob, "audio.wav");
+      form.append("caption_style", JSON.stringify(style));
+      setStage("uploading");
+      setProgress(0);
       const response = await axios.post(`${apiUrl}/upload/`, form, {
-        timeout: 180000,
+        timeout: 300000,
         headers: { "Content-Type": "multipart/form-data" },
       });
       setResult(response.data);
+      setStage("idle");
     } catch (err) {
       setError(err.response?.data?.video_file?.[0] || err.response?.data?.error || "Upload failed");
+      setStage("idle");
     } finally {
       setLoading(false);
     }
@@ -228,19 +248,41 @@ export default function App() {
           {loading ? (
             <span className="flex items-center justify-center gap-2">
               <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              Processing...
+              {stage === "extracting"
+                ? `Extracting audio... ${progress}%`
+                : stage === "loading"
+                  ? "Loading audio engine..."
+                  : "Processing..."}
             </span>
           ) : "Generate Captions"}
         </button>
 
-        {loading && (
+        {loading && stage === "extracting" && (
+          <div className="mt-5 flex flex-col items-center gap-2">
+            <div className="w-full h-2 rounded-full overflow-hidden bg-zinc-800">
+              <div
+                className="h-full bg-gradient-to-r from-emerald-400 to-cyan-400 transition-all duration-200"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+            <p className="text-zinc-500 text-xs">Extracting audio in your browser...</p>
+          </div>
+        )}
+
+        {loading && stage !== "extracting" && (
           <div className="mt-5 flex flex-col items-center gap-2">
             <div className="flex gap-1">
               <span className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
               <span className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
               <span className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
             </div>
-            <p className="text-zinc-500 text-xs">Transcribing &amp; rendering captions...</p>
+            <p className="text-zinc-500 text-xs">
+              {stage === "loading"
+                ? "Loading audio engine..."
+                : stage === "uploading"
+                  ? "Uploading &amp; transcribing..."
+                  : "Transcribing &amp; rendering captions..."}
+            </p>
           </div>
         )}
 

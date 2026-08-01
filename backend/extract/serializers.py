@@ -14,7 +14,7 @@ class AudioExtractSerializer(serializers.ModelSerializer):
             "video_url", "audio_url", "captioned_video_url", "subtitle_url",
         ]
         read_only_fields = [
-            "audio_file", "captioned_video", "subtitle_file", "transcript",
+            "captioned_video", "subtitle_file", "transcript",
             "video_url", "audio_url", "captioned_video_url", "subtitle_url",
         ]
 
@@ -25,4 +25,9 @@ class AudioExtractSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("File not supported")
         if value.size > 500 * 1024 * 1024:
             raise serializers.ValidationError("File too large")
+        return value
+
+    def validate_audio_file(self, value):
+        if value and os.path.splitext(value.name)[1].lower() != ".wav":
+            raise serializers.ValidationError("Audio must be a WAV file")
         return value

@@ -1,4 +1,5 @@
 import os
+import struct
 import subprocess
 import tempfile
 
@@ -90,6 +91,50 @@ def _write_srt(segments, path):
         f.write("\n".join(lines))
 
 
+def _wav_duration(path):
+    """Read duration (seconds) from a WAV file's RIFF header."""
+    with open(path, "rb") as f:
+        header = f.read(12)
+        if header[:4] != b"RIFF" or header[8:12] != b"WAVE":
+            raise ValueError("not a WAV file")
+        num_channels = 1
+        sample_rate = 0
+        bits_per_sample = 16
+        data_bytes = 0
+        while True:
+            chunk = f.read(8)
+            if len(chunk) < 8:
+                break
+            chunk_id, chunk_size = chunk[:4], struct.unpack("<I", chunk[4:8])[0]
+            if chunk_id == b"fmt ":
+                fmt = f.read(chunk_size)
+                num_channels = struct.unpack("<H", fmt[2:4])[0]
+                sample_rate = struct.unpack("<I", fmt[4:8])[0]
+                bits_per_sample = struct.unpack("<H", fmt[14:16])[0]
+            elif chunk_id == b"data":
+                data_bytes = chunk_size
+                break
+            else:
+                f.seek(chunk_size + (chunk_size % 2), 1)
+    if not sample_rate or not data_bytes:
+        raise ValueError("invalid WAV")
+    bytes_per_sample = (bits_per_sample // 8) * num_channels
+    return data_bytes / (sample_rate * bytes_per_sample)
+
+
+def _get_duration(path):
+    try:
+        return _wav_duration(path)
+    except Exception:
+        return float(
+            subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                 "-of", "csv=p=0", path],
+                check=True, capture_output=True, text=True,
+            ).stdout.strip()
+        )
+
+
 def process_video(vid_id):
     video = Video.objects.get(id=vid_id)
 
@@ -104,20 +149,19 @@ def process_video(vid_id):
     media_root = os.path.dirname(video_dir)
     base = os.path.splitext(os.path.basename(video_path))[0]
 
-    audio_path = os.path.join(video_dir, f"{base}_audio.wav")
-    subprocess.run(
-        ["ffmpeg", "-i", video_path, "-vn", "-acodec", "pcm_s16le",
-         "-ar", "16000", "-ac", "1", audio_path, "-y"],
-        check=True, capture_output=True,
-    )
-
-    dur = float(
+    if video.audio_file:
+        audio_path = video.audio_file.path
+    else:
+        audio_path = os.path.join(video_dir, f"{base}_audio.wav")
         subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-             "-of", "csv=p=0", audio_path],
-            check=True, capture_output=True, text=True,
-        ).stdout.strip()
-    )
+            ["ffmpeg", "-i", video_path, "-vn", "-acodec", "pcm_s16le",
+             "-ar", "16000", "-ac", "1", audio_path, "-y"],
+            check=True, capture_output=True,
+        )
+        video.audio_file = os.path.relpath(audio_path, media_root)
+        video.save()
+
+    dur = _get_duration(audio_path)
 
     all_segments = []
     if dur <= 28:
@@ -172,7 +216,6 @@ def process_video(vid_id):
         check=True, capture_output=True,
     )
 
-    video.audio_file = os.path.relpath(audio_path, media_root)
     video.subtitle_file = os.path.relpath(srt_path, media_root)
     video.captioned_video = os.path.relpath(captioned_path, media_root)
     video.transcript = all_segments
