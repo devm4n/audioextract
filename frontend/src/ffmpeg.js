@@ -29,6 +29,10 @@ async function createFFmpeg() {
   await instance.load({
     coreURL: await toBlobURL(`${base}/ffmpeg-core.js`, "text/javascript"),
     wasmURL: await toBlobURL(`${base}/ffmpeg-core.wasm`, "application/wasm"),
+    workerURL: await toBlobURL(
+      "https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.worker.js",
+      "text/javascript"
+    ),
   });
   return instance;
 }
