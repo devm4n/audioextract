@@ -21,6 +21,9 @@ async function createFFmpeg() {
   instance.on("progress", ({ progress }) => {
     onProgress?.(Math.min(100, Math.round(progress * 100)));
   });
+  instance.on("log", ({ type, message }) => {
+    console.log(`[ffmpeg ${type}]`, message);
+  });
   const useMT = typeof crossOriginIsolated === "boolean" && crossOriginIsolated;
   const base = useMT ? MT_BASE : ST_BASE;
   await instance.load({
