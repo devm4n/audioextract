@@ -1,6 +1,6 @@
 import axios from "axios";
 import { useState, useRef } from "react";
-import { extractAudio } from "./ffmpeg";
+import { burnSubtitles, extractAudio } from "./ffmpeg";
 
 const STYLES = {
   fonts: ["Arial", "Inter", "Montserrat", "Poppins", "Bebas Neue"],
@@ -19,6 +19,10 @@ export default function App() {
   const [dragging, setDragging] = useState(false);
   const [stage, setStage] = useState("idle");
   const [progress, setProgress] = useState(0);
+  const [burnedUrl, setBurnedUrl] = useState(null);
+  const [burnedBlob, setBurnedBlob] = useState(null);
+  const [b2Url, setB2Url] = useState(null);
+  const [saving, setSaving] = useState(false);
   const inputRef = useRef(null);
   const [style, setStyle] = useState({
     font: "Inter",
@@ -45,10 +49,12 @@ export default function App() {
     setLoading(true);
     setError("");
     setResult(null);
+    setBurnedUrl(null);
+    setBurnedBlob(null);
+    setB2Url(null);
     setProgress(0);
-    let audioBlob = null;
+    let audioBlob;
     try {
-      setStage("loading");
       try {
         setStage("extracting");
         audioBlob = await extractAudio(file, (p) => {
@@ -56,11 +62,10 @@ export default function App() {
           setProgress(p);
         });
       } catch {
-        // fall back to server-side extraction
+        throw new Error("Could not extract audio in your browser. Try another file.");
       }
       const form = new FormData();
-      form.append("video_file", file);
-      if (audioBlob) form.append("audio_file", audioBlob, "audio.wav");
+      form.append("audio_file", audioBlob, "audio.wav");
       form.append("caption_style", JSON.stringify(style));
       setStage("uploading");
       setProgress(0);
@@ -68,13 +73,51 @@ export default function App() {
         timeout: 300000,
         headers: { "Content-Type": "multipart/form-data" },
       });
-      setResult(response.data);
+      const data = response.data;
+      setResult(data);
+      if (!data.srt_content) throw new Error("Server returned no transcript");
+      setStage("burning");
+      setProgress(0);
+      const blob = await burnSubtitles(file, data.srt_content, style, (p) => {
+        setStage("burning");
+        setProgress(p);
+      });
+      setBurnedBlob(blob);
+      setBurnedUrl(URL.createObjectURL(blob));
       setStage("idle");
     } catch (err) {
-      setError(err.response?.data?.video_file?.[0] || err.response?.data?.error || "Upload failed");
+      setError(err.response?.data?.video_file?.[0] || err.response?.data?.error || err.message || "Upload failed");
       setStage("idle");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDownloadBlob = (blob, filename) => {
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleSaveToB2 = async () => {
+    if (!burnedBlob) return;
+    setSaving(true);
+    setError("");
+    try {
+      const form = new FormData();
+      form.append("file", burnedBlob, "captioned_video.mp4");
+      const res = await axios.post(`${apiUrl}/finalize/`, form, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      setB2Url(res.data.url);
+    } catch (err) {
+      setError(err.response?.data?.error || "Saving to B2 failed");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -82,10 +125,11 @@ export default function App() {
     const res = await fetch(url);
     const blob = await res.blob();
     const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
+    const objUrl = URL.createObjectURL(blob);
+    a.href = objUrl;
     a.download = filename;
     a.click();
-    URL.revokeObjectURL(url);
+    URL.revokeObjectURL(objUrl);
   };
 
   const dropProps = {
@@ -250,14 +294,16 @@ export default function App() {
               <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
               {stage === "extracting"
                 ? `Extracting audio... ${progress}%`
-                : stage === "loading"
-                  ? "Loading audio engine..."
-                  : "Processing..."}
+                : stage === "burning"
+                  ? `Burning captions... ${progress}%`
+                  : stage === "uploading"
+                    ? "Transcribing..."
+                    : "Loading audio engine..."}
             </span>
           ) : "Generate Captions"}
         </button>
 
-        {loading && stage === "extracting" && (
+        {loading && (stage === "extracting" || stage === "burning") && (
           <div className="mt-5 flex flex-col items-center gap-2">
             <div className="w-full h-2 rounded-full overflow-hidden bg-zinc-800">
               <div
@@ -265,11 +311,15 @@ export default function App() {
                 style={{ width: `${progress}%` }}
               />
             </div>
-            <p className="text-zinc-500 text-xs">Extracting audio in your browser...</p>
+            <p className="text-zinc-500 text-xs">
+              {stage === "extracting"
+                ? "Extracting audio in your browser..."
+                : "Burning captions in your browser..."}
+            </p>
           </div>
         )}
 
-        {loading && stage !== "extracting" && (
+        {loading && stage !== "extracting" && stage !== "burning" && (
           <div className="mt-5 flex flex-col items-center gap-2">
             <div className="flex gap-1">
               <span className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
@@ -277,11 +327,9 @@ export default function App() {
               <span className="w-2 h-2 bg-emerald-400 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
             </div>
             <p className="text-zinc-500 text-xs">
-              {stage === "loading"
-                ? "Loading audio engine..."
-                : stage === "uploading"
-                  ? "Uploading &amp; transcribing..."
-                  : "Transcribing &amp; rendering captions..."}
+              {stage === "uploading"
+                ? "Uploading &amp; transcribing..."
+                : "Loading audio engine..."}
             </p>
           </div>
         )}
@@ -295,13 +343,23 @@ export default function App() {
         {result && !loading && (
           <div className="mt-6 space-y-4">
             <video
-              src={result.captioned_video_url || result.captioned_video}
+              src={burnedUrl || result.captioned_video_url || result.captioned_video}
               controls
               className="w-full rounded-xl border border-zinc-800 shadow-xl"
             />
+            {b2Url && (
+              <a
+                href={b2Url}
+                target="_blank"
+                rel="noreferrer"
+                className="block text-center text-xs text-emerald-400 truncate hover:underline"
+              >
+                Saved to B2 &mdash; {b2Url}
+              </a>
+            )}
             <div className="grid grid-cols-3 gap-2">
               <button
-                onClick={() => handleDownload(result.captioned_video_url || result.captioned_video, "captioned_video.mp4")}
+                onClick={() => handleDownloadBlob(burnedBlob, "captioned_video.mp4")}
                 className="flex items-center justify-center gap-2 bg-emerald-500/10 text-emerald-400 text-sm py-2.5 rounded-xl border border-emerald-500/20 hover:bg-emerald-500 hover:text-white hover:border-emerald-500 transition-all duration-200"
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -309,9 +367,25 @@ export default function App() {
                 </svg>
                 Video
               </button>
-              {(result.subtitle_url || result.subtitle_file) && (
+              <button
+                onClick={() => handleSaveToB2()}
+                disabled={saving}
+                className="flex items-center justify-center gap-2 bg-zinc-800/50 text-zinc-400 text-sm py-2.5 rounded-xl border border-zinc-700/50 hover:bg-zinc-700 hover:text-zinc-200 disabled:opacity-40 transition-all duration-200"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 16.5V9.75m0 0 3 3m-3-3-3 3M6.75 19.5a4.5 4.5 0 0 1-1.41-8.775 5.25 5.25 0 0 1 10.233-2.33 3 3 0 0 1 3.758 3.848A3.752 3.752 0 0 1 18 19.5H6.75Z" />
+                </svg>
+                {saving ? "Saving..." : "Save to B2"}
+              </button>
+              {(result.subtitle_url || result.subtitle_file || result.srt_content) && (
                 <button
-                  onClick={() => handleDownload(result.subtitle_url || result.subtitle_file, "captions.srt")}
+                  onClick={() => {
+                    if (result.srt_content) {
+                      handleDownloadBlob(new Blob([result.srt_content], { type: "text/plain" }), "captions.srt");
+                    } else {
+                      handleDownload(result.subtitle_url || result.subtitle_file, "captions.srt");
+                    }
+                  }}
                   className="flex items-center justify-center gap-2 bg-zinc-800/50 text-zinc-400 text-sm py-2.5 rounded-xl border border-zinc-700/50 hover:bg-zinc-700 hover:text-zinc-200 transition-all duration-200"
                 >
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>

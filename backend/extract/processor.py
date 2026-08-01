@@ -1,14 +1,15 @@
 import os
 import struct
-import subprocess
 import tempfile
 
 import requests
+from django.conf import settings
 
 from . import b2
 from .models import Video
 
 SARVAM_API_URL = "https://api.sarvam.ai/speech-to-text"
+CHUNK_SECONDS = 28
 
 
 def _format_ts(seconds):
@@ -17,13 +18,6 @@ def _format_ts(seconds):
     s = int(seconds % 60)
     ms = int((seconds - int(seconds)) * 1000)
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
-
-
-def _hex_to_ass(hex_color):
-    h = hex_color.lstrip("#")
-    if len(h) == 6:
-        return f"&H00{h[4:6]}{h[2:4]}{h[0:2]}"
-    return "&H00FFFFFF"
 
 
 def _transcribe(api_key, audio_path, offset=0):
@@ -80,28 +74,29 @@ def _split_segments(segments, max_words=8):
     return result
 
 
-def _write_srt(segments, path):
+def _build_srt(segments):
     lines = []
     for i, s in enumerate(segments, 1):
         lines.append(str(i))
         lines.append(f"{_format_ts(s['start'])} --> {_format_ts(s['end'])}")
         lines.append(s["text"])
         lines.append("")
-    with open(path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
+    return "\n".join(lines)
 
 
-def _wav_duration(path):
-    """Read duration (seconds) from a WAV file's RIFF header."""
+def _wav_info(path):
+    """Return (num_channels, sample_rate, bits_per_sample, data_bytes, data_offset)."""
     with open(path, "rb") as f:
-        header = f.read(12)
-        if header[:4] != b"RIFF" or header[8:12] != b"WAVE":
+        riff = f.read(12)
+        if riff[:4] != b"RIFF" or riff[8:12] != b"WAVE":
             raise ValueError("not a WAV file")
         num_channels = 1
         sample_rate = 0
         bits_per_sample = 16
         data_bytes = 0
+        data_offset = None
         while True:
+            start = f.tell()
             chunk = f.read(8)
             if len(chunk) < 8:
                 break
@@ -112,27 +107,54 @@ def _wav_duration(path):
                 sample_rate = struct.unpack("<I", fmt[4:8])[0]
                 bits_per_sample = struct.unpack("<H", fmt[14:16])[0]
             elif chunk_id == b"data":
+                data_offset = start + 8
                 data_bytes = chunk_size
                 break
             else:
-                f.seek(chunk_size + (chunk_size % 2), 1)
-    if not sample_rate or not data_bytes:
+                f.seek(start + 8 + chunk_size + (chunk_size % 2))
+    if not sample_rate or data_bytes <= 0 or data_offset is None:
         raise ValueError("invalid WAV")
+    return num_channels, sample_rate, bits_per_sample, data_bytes, data_offset
+
+
+def _wav_duration(path):
+    num_channels, sample_rate, bits_per_sample, data_bytes, _ = _wav_info(path)
     bytes_per_sample = (bits_per_sample // 8) * num_channels
     return data_bytes / (sample_rate * bytes_per_sample)
 
 
-def _get_duration(path):
-    try:
-        return _wav_duration(path)
-    except Exception:
-        return float(
-            subprocess.run(
-                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-                 "-of", "csv=p=0", path],
-                check=True, capture_output=True, text=True,
-            ).stdout.strip()
-        )
+def _wav_header(num_channels, sample_rate, bits_per_sample, data_size):
+    block_align = (bits_per_sample // 8) * num_channels
+    byte_rate = sample_rate * block_align
+    fmt = struct.pack("<HHIIHH", 1, num_channels, sample_rate, byte_rate, block_align, bits_per_sample)
+    return (
+        b"RIFF" + struct.pack("<I", 36 + data_size) + b"WAVE"
+        + b"fmt " + struct.pack("<I", 16) + fmt
+        + b"data" + struct.pack("<I", data_size)
+    )
+
+
+def _split_wav(path, out_dir, chunk_seconds=CHUNK_SECONDS):
+    """Split a WAV file into chunk_seconds-long WAV chunks (pure Python, no ffmpeg)."""
+    num_channels, sample_rate, bits_per_sample, data_bytes, data_offset = _wav_info(path)
+    bytes_per_second = sample_rate * ((bits_per_sample // 8) * num_channels)
+    chunk_bytes = max(1, int(chunk_seconds * bytes_per_second))
+    chunks = []
+    with open(path, "rb") as f:
+        f.seek(data_offset)
+        remaining = data_bytes
+        index = 0
+        while remaining > 0:
+            size = min(chunk_bytes, remaining)
+            data = f.read(size)
+            chunk_path = os.path.join(out_dir, f"chunk_{index:03d}.wav")
+            with open(chunk_path, "wb") as cf:
+                cf.write(_wav_header(num_channels, sample_rate, bits_per_sample, len(data)))
+                cf.write(data)
+            chunks.append(chunk_path)
+            remaining -= size
+            index += 1
+    return chunks
 
 
 def process_video(vid_id):
@@ -144,90 +166,45 @@ def process_video(vid_id):
         video.save()
         raise RuntimeError("SARVAM_API_KEY not set")
 
-    video_path = video.video_file.path
-    video_dir = os.path.dirname(video_path)
-    media_root = os.path.dirname(video_dir)
-    base = os.path.splitext(os.path.basename(video_path))[0]
-
-    if video.audio_file:
-        audio_path = video.audio_file.path
-    else:
-        audio_path = os.path.join(video_dir, f"{base}_audio.wav")
-        subprocess.run(
-            ["ffmpeg", "-i", video_path, "-vn", "-acodec", "pcm_s16le",
-             "-ar", "16000", "-ac", "1", audio_path, "-y"],
-            check=True, capture_output=True,
-        )
-        video.audio_file = os.path.relpath(audio_path, media_root)
+    if not video.audio_file:
+        video.status = "failed"
         video.save()
+        raise RuntimeError("audio_file is required")
 
-    dur = _get_duration(audio_path)
+    audio_path = video.audio_file.path
+    base = os.path.splitext(os.path.basename(audio_path))[0]
+
+    dur = _wav_duration(audio_path)
 
     all_segments = []
-    if dur <= 28:
+    if dur <= CHUNK_SECONDS:
         all_segments = _transcribe(api_key, audio_path)
     else:
-        import glob
         chunk_dir = tempfile.mkdtemp()
-        subprocess.run(
-            ["ffmpeg", "-i", audio_path, "-f", "segment",
-             "-segment_time", "28", os.path.join(chunk_dir, "chunk_%03d.wav"), "-y"],
-            check=True, capture_output=True,
-        )
+        chunks = _split_wav(audio_path, chunk_dir, CHUNK_SECONDS)
         offset = 0.0
-        for cf in sorted(glob.glob(os.path.join(chunk_dir, "chunk_*.wav"))):
-            cd = float(
-                subprocess.run(
-                    ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-                     "-of", "csv=p=0", cf],
-                    check=True, capture_output=True, text=True,
-                ).stdout.strip()
-            )
+        for cf in chunks:
+            cd = _wav_duration(cf)
             all_segments.extend(_transcribe(api_key, cf, offset))
             offset += cd
 
     max_words = (video.caption_style or {}).get("maxWords", 8)
     all_segments = _split_segments(all_segments, max_words)
 
-    srt_path = os.path.join(video_dir, f"{base}.srt")
-    _write_srt(all_segments, srt_path)
+    srt_content = _build_srt(all_segments)
+    srt_path = os.path.join(os.path.dirname(audio_path), f"{base}.srt")
+    with open(srt_path, "w", encoding="utf-8") as f:
+        f.write(srt_content)
 
-    style = video.caption_style or {}
-    font = style.get("font", "Arial")
-    font_size = style.get("fontSize", 26)
-    color = _hex_to_ass(style.get("fontColor", "#FFFFFF"))
-    bg = _hex_to_ass(style.get("bgColor", "#000000"))
-    bg_op = style.get("bgOpacity", 0.7)
-    pos = style.get("position", "bottom")
-    mv = {"bottom": 50, "top": 650, "center": 360}.get(pos, 50)
-
-    captioned_path = os.path.join(video_dir, f"{base}_captioned.mp4")
-    subprocess.run(
-        ["ffmpeg", "-i", video_path,
-         "-vf",
-         f"subtitles={srt_path}:force_style="
-         f"'FontName={font},FontSize={font_size},"
-         f"PrimaryColour={color},OutlineColour={bg},"
-         f"BackColour=&H{int(bg_op*255):02X}000000,"
-         f"BorderStyle=1,Outline=2,Shadow=1,"
-         f"Alignment=2,MarginV={mv}'",
-         "-c:a", "aac", "-b:a", "192k",
-         "-preset", "fast", captioned_path, "-y"],
-        check=True, capture_output=True,
-    )
-
-    video.subtitle_file = os.path.relpath(srt_path, media_root)
-    video.captioned_video = os.path.relpath(captioned_path, media_root)
+    video.subtitle_file = os.path.relpath(srt_path, settings.MEDIA_ROOT)
     video.transcript = all_segments
+    video.srt_content = srt_content
 
     b2_prefix = f"{base}_{vid_id}"
-
     try:
-        video.video_url = b2.upload(video_path, f"{b2_prefix}_original.mp4")
         video.audio_url = b2.upload(audio_path, f"{b2_prefix}_audio.wav")
         video.subtitle_url = b2.upload(srt_path, f"{b2_prefix}_captions.srt")
-        video.captioned_video_url = b2.upload(captioned_path, f"{b2_prefix}_captioned.mp4")
-    except Exception as e:
+    except Exception:
         pass
 
     video.status = "done"

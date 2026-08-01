@@ -58,13 +58,13 @@ def _ensure_bucket():
     return _bucket_cache
 
 
-def _upload_file(local_path, file_name):
+def _upload_data(data, file_name, content_type=None):
     auth = _authorize()
     api_url = auth["apiUrl"]
     token = auth["authorizationToken"]
     bucket_id = _ensure_bucket()
 
-    ct, _ = mimetypes.guess_type(local_path)
+    ct = content_type or "application/octet-stream"
     if file_name.endswith(".srt"):
         ct = "text/plain; charset=utf-8"
 
@@ -76,19 +76,24 @@ def _upload_file(local_path, file_name):
     r.raise_for_status()
     upload_data = r.json()
 
+    r = requests.post(
+        upload_data["uploadUrl"],
+        data=data,
+        headers={
+            "Authorization": upload_data["authorizationToken"],
+            "X-Bz-File-Name": file_name,
+            "Content-Type": ct,
+            "X-Bz-Content-Sha1": "do_not_verify",
+        },
+    )
+    r.raise_for_status()
+    return r.json()
+
+
+def _upload_file(local_path, file_name):
+    ct, _ = mimetypes.guess_type(local_path)
     with open(local_path, "rb") as f:
-        r = requests.post(
-            upload_data["uploadUrl"],
-            data=f,
-            headers={
-                "Authorization": upload_data["authorizationToken"],
-                "X-Bz-File-Name": file_name,
-                "Content-Type": ct or "application/octet-stream",
-                "X-Bz-Content-Sha1": "do_not_verify",
-            },
-        )
-        r.raise_for_status()
-        return r.json()
+        return _upload_data(f.read(), file_name, content_type=ct)
 
 
 def get_download_url(key):
@@ -112,4 +117,9 @@ def get_download_url(key):
 
 def upload(local_path, key):
     _upload_file(local_path, key)
+    return get_download_url(key)
+
+
+def upload_bytes(data, key, content_type=None):
+    _upload_data(data, key, content_type=content_type)
     return get_download_url(key)

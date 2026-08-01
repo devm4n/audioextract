@@ -13,4 +13,6 @@ urlpatterns = [
     path("status/<int:pk>/", views.AudioStatusView.as_view()),
     path("api/download/<int:pk>/", views.AudioDownloadView.as_view()),
     path("download/<int:pk>/", views.AudioDownloadView.as_view()),
+    path("api/finalize/", views.CaptionedVideoUploadView.as_view()),
+    path("finalize/", views.CaptionedVideoUploadView.as_view()),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

@@ -6,15 +6,19 @@ from .models import Video
 
 
 class AudioExtractSerializer(serializers.ModelSerializer):
+    video_file = serializers.FileField(required=False, allow_null=True)
+    audio_file = serializers.FileField(required=True)
+
     class Meta:
         model = Video
         fields = [
             "id", "audio_file", "video_file", "captioned_video",
             "subtitle_file", "transcript", "caption_style", "status",
             "video_url", "audio_url", "captioned_video_url", "subtitle_url",
+            "srt_content",
         ]
         read_only_fields = [
-            "captioned_video", "subtitle_file", "transcript",
+            "captioned_video", "subtitle_file", "transcript", "srt_content",
             "video_url", "audio_url", "captioned_video_url", "subtitle_url",
         ]
 
